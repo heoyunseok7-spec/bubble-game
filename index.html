@@ -3,12 +3,259 @@
 <head>
   <meta charset="UTF-8">
   <title>Bubble Spinner</title>
-  <link rel="stylesheet" href="style.css">
+  <style>
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: #fdfdfd;
+      margin: 0;
+      font-family: "Arial", sans-serif;
+    }
+    canvas {
+      background: white;
+      border: 2px solid #444;
+      margin-top: 10px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+    }
+    h2 {
+      margin-top: 20px;
+      color: #444;
+    }
+  </style>
 </head>
 <body>
-  <h2>Bubble Spinner with Items</h2>
-  <canvas id="gameCanvas" width="600" height="600"></canvas>
-  <p>마우스로 클릭하면 구슬 발사!</p>
-  <script src="game.js"></script>
+  <h2>Bubble Spinner 🎮</h2>
+  <canvas id="gameCanvas" width="600" height="650"></canvas>
+  <p>마우스로 조준 후 클릭해서 발사</p>
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    const bubbleRadius = 15;
+    const colors = ["#ff6f61","#6a5acd","#20b2aa","#ffb347","#9370db","#ff69b4","#3cb371"];
+    const itemTypes = ["bomb", "dual", "color"];
+
+    let bubbles = [];
+    let shooter = null;
+    let nextBubbles = [];
+    let shotCount = 0;
+    let rotationSpeed = 0;
+    const center = { x: canvas.width/2, y: 280 };
+    let aimAngle = 0;
+
+    function randomColor() {
+      return colors[Math.floor(Math.random() * colors.length)];
+    }
+    function randomItemChance() {
+      return Math.random() < 0.15 ? itemTypes[Math.floor(Math.random()*itemTypes.length)] : null;
+    }
+
+    function initBubbles() {
+      const layers = 3;
+      for (let r = 1; r <= layers; r++) {
+        const count = r * 6;
+        for (let i = 0; i < count; i++) {
+          const angle = (i / count) * Math.PI * 2;
+          const x = center.x + Math.cos(angle) * r * bubbleRadius * 2;
+          const y = center.y + Math.sin(angle) * r * bubbleRadius * 2;
+          let item = Math.random() < 0.1 ? itemTypes[Math.floor(Math.random()*itemTypes.length)] : null;
+          bubbles.push({ x, y, color: randomColor(), item });
+        }
+      }
+    }
+
+    function refillShooter() {
+      nextBubbles = [];
+      for (let i=0; i<5; i++) {
+        nextBubbles.push({
+          color: randomColor(),
+          item: randomItemChance()
+        });
+      }
+      shooter = {
+        x: canvas.width/2, y: 600,
+        dx:0, dy:0, active:false,
+        color: nextBubbles[0].color,
+        item: nextBubbles[0].item
+      };
+      shotCount = 0;
+    }
+
+    function drawShooter() {
+      ctx.beginPath();
+      ctx.arc(shooter.x, shooter.y, bubbleRadius, 0, Math.PI*2);
+      ctx.fillStyle = shooter.color;
+      ctx.fill();
+      ctx.closePath();
+      if (shooter.item) {
+        ctx.fillStyle = "black";
+        ctx.fillText(shooter.item[0].toUpperCase(), shooter.x-4, shooter.y+4);
+      }
+    }
+
+    function drawNextBubbles() {
+      for (let i=0; i<nextBubbles.length; i++) {
+        ctx.beginPath();
+        ctx.arc(100 + i*40, 630, bubbleRadius, 0, Math.PI*2);
+        ctx.fillStyle = nextBubbles[i].color;
+        ctx.fill();
+        ctx.closePath();
+        if (nextBubbles[i].item) {
+          ctx.fillStyle = "black";
+          ctx.fillText(nextBubbles[i].item[0].toUpperCase(), 100+i*40-4, 635);
+        }
+      }
+    }
+
+    // 화살표 그리기 (핑크, 굵게)
+    function drawAimLine() {
+      ctx.beginPath();
+      ctx.moveTo(shooter.x, shooter.y);
+      ctx.lineTo(shooter.x + Math.cos(aimAngle)*70, shooter.y + Math.sin(aimAngle)*70);
+      ctx.strokeStyle = "#ff69b4";
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      ctx.lineWidth = 1;
+    }
+
+    function drawBubbles() {
+      bubbles.forEach(b => {
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, bubbleRadius, 0, Math.PI*2);
+        ctx.fillStyle = b.color;
+        ctx.fill();
+        ctx.closePath();
+        if (b.item) {
+          ctx.fillStyle = "black";
+          ctx.fillText(b.item[0].toUpperCase(), b.x-4, b.y+4);
+        }
+      });
+    }
+
+    function checkCollision() {
+      for (let i=0;i<bubbles.length;i++) {
+        const b = bubbles[i];
+        const dx = shooter.x - b.x;
+        const dy = shooter.y - b.y;
+        const dist = Math.sqrt(dx*dx+dy*dy);
+        if (dist < bubbleRadius*2) {
+          bubbles.push({x:shooter.x,y:shooter.y,color:shooter.color,item:shooter.item});
+          if (shooter.item) applyItemEffect(shooter,b);
+          checkMatches();
+          rotationSpeed = (shooter.dx>0?0.02:-0.02);
+          nextBubble();
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function applyItemEffect(shooter,targetBubble){
+      if (shooter.item==="bomb") {
+        bubbles = bubbles.filter(b => Math.hypot(b.x-targetBubble.x,b.y-targetBubble.y)>bubbleRadius*6);
+      }
+      if (shooter.item==="dual") {
+        bubbles = bubbles.filter(b => Math.hypot(b.x-targetBubble.x,b.y-targetBubble.y)>bubbleRadius*2.5);
+      }
+      if (shooter.item==="color") {
+        bubbles = bubbles.filter(b => b.color!==targetBubble.color);
+      }
+    }
+
+    function checkMatches(){
+      let toRemove=new Set();
+      for(let i=0;i<bubbles.length;i++){
+        let group=[bubbles[i]];
+        for(let j=0;j<bubbles.length;j++){
+          if(i===j)continue;
+          if(Math.hypot(bubbles[i].x-bubbles[j].x,bubbles[i].y-bubbles[j].y)<bubbleRadius*2.2
+            && bubbles[i].color===bubbles[j].color){
+            group.push(bubbles[j]);
+          }
+        }
+        if(group.length>=3)group.forEach(b=>toRemove.add(b));
+      }
+      bubbles=bubbles.filter(b=>!toRemove.has(b));
+    }
+
+    function rotateBubbles(){
+      if(rotationSpeed===0)return;
+      bubbles.forEach(b=>{
+        let dx=b.x-center.x;
+        let dy=b.y-center.y;
+        let angle=Math.atan2(dy,dx)+rotationSpeed;
+        let dist=Math.sqrt(dx*dx+dy*dy);
+        b.x=center.x+Math.cos(angle)*dist;
+        b.y=center.y+Math.sin(angle)*dist;
+      });
+      rotationSpeed*=0.99;
+      if(Math.abs(rotationSpeed)<0.001)rotationSpeed=0;
+    }
+
+    function nextBubble(){
+      shotCount++;
+      if(shotCount>=5){
+        // 원판에 랜덤 구슬 추가
+        for(let i=0;i<5;i++){
+          let angle=Math.random()*Math.PI*2;
+          let dist=(2+Math.random()*2)*bubbleRadius*2;
+          bubbles.push({
+            x:center.x+Math.cos(angle)*dist,
+            y:center.y+Math.sin(angle)*dist,
+            color:randomColor(),
+            item:randomItemChance()
+          });
+        }
+        refillShooter();
+      } else {
+        shooter = {
+          x: canvas.width/2, y: 600,
+          dx:0, dy:0, active:false,
+          color: nextBubbles[shotCount].color,
+          item: nextBubbles[shotCount].item
+        };
+      }
+    }
+
+    function update(){
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      drawBubbles();
+      drawShooter();
+      drawNextBubbles();
+      // 화살표는 항상 표시 (발사 중엔 흐리게)
+      ctx.globalAlpha = shooter.active ? 0.3 : 1;
+      drawAimLine();
+      ctx.globalAlpha = 1;
+
+      if(shooter.active){
+        shooter.x+=shooter.dx;
+        shooter.y+=shooter.dy;
+        if(shooter.x-bubbleRadius<0||shooter.x+bubbleRadius>canvas.width) shooter.dx*=-1;
+        if(shooter.y-bubbleRadius<0||shooter.y+bubbleRadius>canvas.height) shooter.dy*=-1;
+        if(checkCollision()) return;
+      }
+      rotateBubbles();
+      requestAnimationFrame(update);
+    }
+
+    canvas.addEventListener("mousemove",(e)=>{
+      const rect=canvas.getBoundingClientRect();
+      const targetX=e.clientX-rect.left;
+      const targetY=e.clientY-rect.top;
+      aimAngle=Math.atan2(targetY-shooter.y,targetX-shooter.x);
+    });
+    canvas.addEventListener("click",()=>{
+      if(!shooter.active){
+        shooter.dx=Math.cos(aimAngle)*10;
+        shooter.dy=Math.sin(aimAngle)*10;
+        shooter.active=true;
+      }
+    });
+
+    initBubbles();
+    refillShooter();
+    update();
+  </script>
 </body>
 </html>
