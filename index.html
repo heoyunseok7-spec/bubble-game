@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Bubble Spinner with Items</title>
+<style>
+  html,body{height:100%;margin:0;background:#111;color:#fff;display:flex;align-items:center;justify-content:center}
+  #gameWrap{width:100%;max-width:720px;padding:16px;box-sizing:border-box}
+  canvas{display:block;width:100%;background:#0b1220;border-radius:12px;box-shadow:0 6px 30px rgba(0,0,0,0.6)}
+  #hud{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
+  button{padding:8px 12px;border-radius:8px;border:0;background:#2b6cff;color:white;font-weight:600}
+  .small{font-size:14px}
+</style>
+</head>
+<body>
+<div id="gameWrap">
+  <canvas id="c" width="720" height="720"></canvas>
+  <div id="hud">
+    <div class="small">Score: <span id="score">0</span></div>
+    <button id="restart">Restart</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const cx = W/2, cy = H/2;
+let scoreEl = document.getElementById('score');
+let restartBtn = document.getElementById('restart');
+
+let colors = ['#f94144','#f3722c','#f9c74f','#90be6d','#577590'];
+const radiusWheel = 180;
+const attachRadius = radiusWheel + 28;
+const ballR = 14;
+let wheelAngle = 0;
+let wheelSpeed = 0.015;
+let attached = []; // {angle,color,type}
+let bullets = [];  // {x,y,dx,dy,color,type}
+let nextBall = randomBall();
+let score = 0;
+let lastTime=0;
+
+// 아이템 타입 정의
+// normal: 일반 구슬
+// change: 색변환 아이템
+// bomb: 폭탄 아이템
+// dual: 두 가지 색 구슬
+function randomBall(){
+  let r = Math.random();
+  if(r < 0.1) return {color:randColor(), type:'change'}; // 10%
+  if(r < 0.18) return {color:randColor(), type:'bomb'};   // 8%
+  if(r < 0.25) { // 7%
+    let c1 = randColor(), c2 = randColor();
+    while(c2===c1) c2 = randColor();
+    return {color:[c1,c2], type:'dual'};
+  }
+  return {color:randColor(), type:'normal'};
+}
+function randColor(){ return colors[Math.floor(Math.random()*colors.length)]; }
+
+function init(){
+  attached = [];
+  bullets = [];
+  score = 0;
+  scoreEl.textContent = score;
+  for(let i=0;i<6;i++){
+    let a = (i/6)*Math.PI*2;
+    attached.push({angle:a,color:randColor(),type:'normal'});
+  }
+  nextBall = randomBall();
+}
+
+function loop(t){
+  let dt = (t - lastTime) * 0.001;
+  lastTime = t;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function update(dt){
+  wheelAngle += wheelSpeed;
+  for(let i=bullets.length-1;i>=0;i--){
+    let b = bullets[i];
+    b.x += b.dx*dt;
+    b.y += b.dy*dt;
+    let dist = Math.hypot(b.x-cx, b.y-cy);
+    if(dist <= attachRadius + 2){
+      let angleToCenter = Math.atan2(b.y-cy, b.x-cx);
+      let rel = normalizeAngle(angleToCenter - wheelAngle);
+      attached.push({angle:rel,color:b.color,type:b.type});
+      bullets.splice(i,1);
+      handleAttach(attached[attached.length-1]); // 아이템 효과 처리
+    }
+    if(b.x < -50 || b.x > W+50 || b.y < -50 || b.y > H+50) bullets.splice(i,1);
+  }
+}
+
+// 아이템 효과
+function handleAttach(ball){
+  if(ball.type==='change'){
+    // 가장 많은 색상으로 전체 변환
+    let counts={};
+    attached.forEach(a=>{
+      let c = Array.isArray(a.color)?a.color[0]:a.color;
+      counts[c]=(counts[c]||0)+1;
+    });
+    let topColor = Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0];
+    attached.forEach(a=>{if(a.type==='normal')a.color=topColor;});
+  }
+  else if(ball.type==='bomb'){
+    // 주변 6개 이상 제거
+    let abs = ball.angle+wheelAngle;
+    let x = cx+Math.cos(abs)*attachRadius;
+    let y = cy+Math.sin(abs)*attachRadius;
+    let destroyed=0;
+    attached = attached.filter(a=>{
+      let ax = cx+Math.cos(a.angle+wheelAngle)*attachRadius;
+      let ay = cy+Math.sin(a.angle+wheelAngle)*attachRadius;
+      let d=Math.hypot(ax-x,ay-y);
+      if(d<60 && a!==ball){destroyed++; return false;}
+      return true;
+    });
+    score+=destroyed*15;
+    scoreEl.textContent=score;
+  }
+  else {
+    // normal / dual 은 기본 판정
+    checkPop();
+  }
+}
+
+// 3개 이상 연결시 터짐
+function checkPop(){
+  if(attached.length < 3) return;
+  let arr = attached.map((a,idx)=>({idx, absAngle: normalizeAngle(a.angle+wheelAngle), color:a.color, type:a.type}));
+  arr.sort((a,b)=>a.absAngle-b.absAngle);
+  let groups=[];
+  let match = (c1,c2)=>{
+    if(Array.isArray(c1) && Array.isArray(c2)) return c1.some(x=>c2.includes(x));
+    if(Array.isArray(c1)) return c1.includes(c2);
+    if(Array.isArray(c2)) return c2.includes(c1);
+    return c1===c2;
+  };
+  let current={indices:[arr[0].idx], color:arr[0].color};
+  for(let i=1;i<arr.length;i++){
+    if(match(arr[i].color,current.color)){
+      current.indices.push(arr[i].idx);
+      if(Array.isArray(arr[i].color)){
+        current.color=[].concat(current.color).concat(arr[i].color);
+      }
+    } else {
+      groups.push(current);
+      current={indices:[arr[i].idx], color:arr[i].color};
+    }
+  }
+  if(match(arr[0].color,current.color)){
+    current.indices.push(arr[0].idx);
+  }
+  groups.push(current);
+  for(let g of groups){
+    if(g.indices.length>=3){
+      let set=new Set(g.indices);
+      attached=attached.filter((v,i)=>!set.has(i));
+      score+=g.indices.length*10;
+      scoreEl.textContent=score;
+    }
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.save();
+  ctx.translate(cx,cy);
+  ctx.rotate(wheelAngle);
+  ctx.beginPath();
+  ctx.arc(0,0,radiusWheel,0,Math.PI*2);
+  ctx.fillStyle='#0e1a2b';
+  ctx.fill();
+  ctx.restore();
+  for(let a of attached){
+    let abs=a.angle+wheelAngle;
+    let x=cx+Math.cos(abs)*attachRadius;
+    let y=cy+Math.sin(abs)*attachRadius;
+    drawBall(x,y,a.color,a.type);
+  }
+  for(let b of bullets) drawBall(b.x,b.y,b.color,b.type);
+  // shooter preview
+  drawBall(cx,H-60,nextBall.color,nextBall.type);
+  ctx.fillStyle='#ccc'; ctx.font='14px sans-serif';
+  ctx.fillText('Click/Tap to shoot',cx-70,H-20);
+}
+
+function drawBall(x,y,color,type){
+  ctx.beginPath();
+  if(type==='bomb'){ctx.fillStyle='#fff';}
+  else if(type==='change'){ctx.fillStyle='#0ff';}
+  else if(type==='dual'){ 
+    let g=ctx.createLinearGradient(x-ballR,y-ballR,x+ballR,y+ballR);
+    g.addColorStop(0,color[0]); g.addColorStop(1,color[1]);
+    ctx.fillStyle=g;
+  }
+  else ctx.fillStyle=color;
+  ctx.arc(x,y,ballR,0,Math.PI*2);
+  ctx.fill();
+  ctx.lineWidth=1; ctx.strokeStyle='#000'; ctx.stroke();
+}
+
+canvas.addEventListener('click',shootHandler);
+canvas.addEventListener('touchstart',(e)=>{e.preventDefault(); shootHandler(e.touches[0]);},{passive:false});
+function shootHandler(ev){
+  let rect=canvas.getBoundingClientRect();
+  let mx=(ev.clientX-rect.left)*(canvas.width/rect.width);
+  let my=(ev.clientY-rect.top)*(canvas.height/rect.height);
+  let sx=cx, sy=H-60;
+  let dx=mx-sx, dy=my-sy;
+  let len=Math.hypot(dx,dy)||1;
+  dx=dx/len*420; dy=dy/len*420;
+  bullets.push({x:sx,y:sy,dx,dy,color:nextBall.color,type:nextBall.type});
+  nextBall=randomBall();
+}
+function normalizeAngle(a){while(a<=-Math.PI)a+=Math.PI*2;while(a>Math.PI)a-=Math.PI*2;return a;}
+restartBtn.addEventListener('click',init);
+
+init();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
